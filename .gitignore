@@ -6,6 +6,7 @@ build/
 .venv/
 venv/
 .env
+.uv-cache/
 *.h5
 outputs/
 multirun/

@@ -1,0 +1,52 @@
+# Normalize line endings: let Git decide for all text files (LF in repo)
+* text=auto
+
+# --- Explicitly LF (would break if CRLF) ---
+*.sh        text eol=lf
+*.bash      text eol=lf
+*.py        text eol=lf
+*.pyi       text eol=lf
+*.jl        text eol=lf
+*.js        text eol=lf
+*.ts        text eol=lf
+*.css       text eol=lf
+*.qmd       text eol=lf
+*.md        text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+*.toml      text eol=lf
+*.json      text eol=lf
+*.bib       text eol=lf
+*.tex       text eol=lf
+*.sty       text eol=lf
+.latexmkrc  text eol=lf
+*.html      text eol=lf
+*.mplstyle  text eol=lf
+*.xml       text eol=lf
+*.svg       text eol=lf
+*.lock      text eol=lf
+
+# --- Windows-only scripts (CRLF) ---
+*.bat       text eol=crlf
+*.cmd       text eol=crlf
+*.ps1       text eol=crlf
+
+# --- Binaries: no conversion ---
+*.png       binary
+*.jpg       binary
+*.jpeg      binary
+*.gif       binary
+*.ico       binary
+*.pdf       binary
+*.ipynb     binary
+*.pkl       binary
+*.pt        binary
+*.ckpt      binary
+*.zip       binary
+*.tar       binary
+*.gz        binary
+*.npy       binary
+*.npz       binary
+*.h5        binary
+*.hdf5      binary
+*.msgpack   binary

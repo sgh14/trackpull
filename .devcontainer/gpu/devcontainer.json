@@ -1,0 +1,117 @@
+{
+  // This file tells VS Code how to set up your GPU-enabled development container
+  "name": "trackpull GPU",
+  // Build configuration
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": ".."
+  },
+
+  // GPU-specific runtime arguments
+  "runArgs": [
+    "--env-file", "${localWorkspaceFolder}/.devcontainer/.env",
+    "--gpus=all",
+    "--ipc=host",
+    "--ulimit", "memlock=-1",
+    "--ulimit", "stack=67108864"
+  ],
+
+  "features": {
+    "ghcr.io/devcontainers/features/github-cli:1": {},
+    "ghcr.io/devcontainers/features/git:1": {},
+    "ghcr.io/devcontainers/features/node:1": {},
+    "ghcr.io/rocker-org/devcontainer-features/quarto-cli:1": {},
+    "ghcr.io/prulloac/devcontainer-features/latex:1": {
+      "packages": "type1cm,cm-super,dvipng,underscore"
+    },
+    "ghcr.io/devcontainers/features/common-utils:2": {}
+  },
+
+  "mounts": [
+    "source=${localEnv:HOME}${localEnv:USERPROFILE}/.ssh/config,target=/tmp/host-ssh-config,type=bind,readonly",
+    "source=${localEnv:HOME}${localEnv:USERPROFILE}/.ssh/known_hosts,target=/home/vscode/.ssh/known_hosts,type=bind"
+  ],
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "anthropic.claude-code",
+        "GitHub.copilot-chat",
+        "GitHub.copilot",
+        "ms-vscode.notepadplusplus-keybindings",
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "charliermarsh.ruff",
+        "ms-toolsai.jupyter",
+        "mechatroner.rainbow-csv",
+        "eamodio.gitlens",
+        "GitHub.vscode-pull-request-github",
+        "quarto.quarto",
+        "yzhang.markdown-all-in-one",
+        "bierner.markdown-mermaid",
+        "usernamehw.errorlens",
+        "editorconfig.editorconfig",
+        "gruntfuggly.todo-tree",
+        "streetsidesoftware.code-spell-checker",
+        "tamasfe.even-better-toml",
+        "redhat.vscode-yaml",
+        "tomoki1207.pdf",
+        "h5web.vscode-h5web"
+      ],
+
+      "mcp": {
+        "servers": {
+          "github": {
+            "command": "npx",
+            "args": ["-y", "@modelcontextprotocol/server-github"],
+            "env": {
+              "GITHUB_PERSONAL_ACCESS_TOKEN": "${localEnv:GH_TOKEN}"
+            }
+          },
+          "context7": {
+            "type": "stdio",
+            "command": "npx",
+            "args": ["-y", "@upstash/context7-mcp", "--api-key", "${localEnv:CONTEXT7_API_KEY}"]
+          }
+        }
+      },
+
+      "settings": {
+        "python.defaultInterpreterPath": "${containerWorkspaceFolder}/.venv/bin/python",
+        "python.terminal.activateEnvironment": false,
+        "python.languageServer": "Pylance",
+        "python.analysis.typeCheckingMode": "basic",
+        "ruff.enable": true,
+        "ruff.lint.enable": true,
+        "[python]": {
+          "editor.defaultFormatter": "charliermarsh.ruff",
+          "editor.formatOnSave": true,
+          "editor.codeActionsOnSave": {
+            "source.organizeImports": "explicit",
+            "source.fixAll.ruff": "explicit"
+          }
+        },
+        "files.trimTrailingWhitespace": true,
+        "files.insertFinalNewline": true,
+        "errorLens.enabledDiagnosticLevels": ["error", "warning"],
+        "terminal.integrated.defaultProfile.linux": "bash"
+      }
+    }
+  },
+
+  "postCreateCommand": "bash .devcontainer/gpu/post-create.sh",
+
+  "remoteEnv": {
+    "PYTHONUNBUFFERED": "1",
+    "UV_CACHE_DIR": "${containerWorkspaceFolder}/.uv-cache",
+    "VIRTUAL_ENV": "${containerWorkspaceFolder}/.venv",
+    "PATH": "${containerWorkspaceFolder}/.venv/bin:${containerEnv:PATH}",
+    "QUARTO_PYTHON": "${containerWorkspaceFolder}/.venv/bin/python"
+  },
+
+  "remoteUser": "vscode",
+
+  "forwardPorts": [8000, 8080, 8888, 6006, 5000],
+
+  "postAttachCommand": "bash .devcontainer/gpu/post-attach.sh"
+}

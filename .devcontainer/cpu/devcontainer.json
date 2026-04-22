@@ -1,0 +1,166 @@
+{
+  // This file tells VS Code how to set up your development container
+  "name": "trackpull CPU",
+  // Build configuration
+  "build": {
+    // Use the Dockerfile in the same directory as this file
+    "dockerfile": "Dockerfile",
+    // Build context is the current directory (where your project is)
+    "context": ".."
+  },
+
+  // Runtime arguments
+  "runArgs": [
+    "--env-file", "${localWorkspaceFolder}/.devcontainer/.env"    // Load environment variables from .env file
+  ],
+
+  // Features are pre-packaged tools you can add to your container
+  "features": {
+    // GitHub CLI for interacting with GitHub from the terminal
+    "ghcr.io/devcontainers/features/github-cli:1": {},
+    // Git for version control
+    "ghcr.io/devcontainers/features/git:1": {},
+    // Node.js (required for npm-based CLI tools)
+    "ghcr.io/devcontainers/features/node:1": {},
+    // Quarto CLI for scientific publishing
+    "ghcr.io/rocker-org/devcontainer-features/quarto-cli:1": {},
+    // LaTeX for document compilation and scientific publishing
+    "ghcr.io/prulloac/devcontainer-features/latex:1": {
+      "packages": "type1cm,cm-super,dvipng,underscore"
+    },
+    // Common utilities including zsh, oh-my-zsh, and other useful tools
+    "ghcr.io/devcontainers/features/common-utils:2": {}
+  },
+
+  // Mounts: Share folders/files between your computer and the container
+  "mounts": [
+    // SSH config: Mount to a temporary location, then copy with correct permissions
+    "source=${localEnv:HOME}${localEnv:USERPROFILE}/.ssh/config,target=/tmp/host-ssh-config,type=bind,readonly",
+    "source=${localEnv:HOME}${localEnv:USERPROFILE}/.ssh/known_hosts,target=/home/vscode/.ssh/known_hosts,type=bind"
+  ],
+
+  // VS Code settings that apply inside the container
+  "customizations": {
+    "vscode": {
+      // Extensions to install automatically in the container
+      "extensions": [
+        // AI Assistants
+        "anthropic.claude-code",
+        "GitHub.copilot-chat",
+        "GitHub.copilot",
+
+        // Editor preferences
+        "ms-vscode.notepadplusplus-keybindings",
+
+        // Python & Data Science
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "charliermarsh.ruff",
+        "ms-toolsai.jupyter",
+        "mechatroner.rainbow-csv",
+
+        // Git & GitHub
+        "eamodio.gitlens",
+        "GitHub.vscode-pull-request-github",
+
+        // Documentation
+        "quarto.quarto",
+        "yzhang.markdown-all-in-one",
+        "bierner.markdown-mermaid",
+
+        // Code Quality
+        "usernamehw.errorlens",
+        "editorconfig.editorconfig",
+        "gruntfuggly.todo-tree",
+        "streetsidesoftware.code-spell-checker",
+
+        // Utilities
+        "tamasfe.even-better-toml",
+        "redhat.vscode-yaml",
+        "tomoki1207.pdf",
+        "h5web.vscode-h5web"
+      ],
+
+      "mcp": {
+        "servers": {
+          "github": {
+            "command": "npx",
+            "args": [
+              "-y",
+              "@modelcontextprotocol/server-github"
+            ],
+            "env": {
+              "GITHUB_PERSONAL_ACCESS_TOKEN": "${localEnv:GH_TOKEN}"
+            }
+          },
+          "context7": {
+            "type": "stdio",
+            "command": "npx",
+            "args": ["-y", "@upstash/context7-mcp", "--api-key", "${localEnv:CONTEXT7_API_KEY}"]
+          }
+        }
+      },
+
+      // VS Code settings specific to this container
+      "settings": {
+        // Python configuration
+        "python.defaultInterpreterPath": "${containerWorkspaceFolder}/.venv/bin/python",
+        "python.terminal.activateEnvironment": false,
+        "python.languageServer": "Pylance",
+        "python.analysis.typeCheckingMode": "basic",
+
+        // Ruff for linting and formatting
+        "ruff.enable": true,
+        "ruff.lint.enable": true,
+        "[python]": {
+          "editor.defaultFormatter": "charliermarsh.ruff",
+          "editor.formatOnSave": true,
+          "editor.codeActionsOnSave": {
+            "source.organizeImports": "explicit",
+            "source.fixAll.ruff": "explicit"
+          }
+        },
+
+        // File cleanup on save
+        "files.trimTrailingWhitespace": true,
+        "files.insertFinalNewline": true,
+
+        // Error Lens - show errors inline
+        "errorLens.enabledDiagnosticLevels": ["error", "warning"],
+
+        // Terminal configuration
+        "terminal.integrated.defaultProfile.linux": "bash"
+      }
+    }
+  },
+
+  // Command to run after the container is created
+  "postCreateCommand": "bash .devcontainer/cpu/post-create.sh",
+
+  // Environment variables available in the container
+  "remoteEnv": {
+    "PYTHONUNBUFFERED": "1",
+    // UV cache on same filesystem as .venv to enable hardlinks (faster installs)
+    "UV_CACHE_DIR": "${containerWorkspaceFolder}/.uv-cache",
+    // Activate the venv for all processes in the container
+    "VIRTUAL_ENV": "${containerWorkspaceFolder}/.venv",
+    "PATH": "${containerWorkspaceFolder}/.venv/bin:${containerEnv:PATH}",
+    // Tell Quarto explicitly which Python to use
+    "QUARTO_PYTHON": "${containerWorkspaceFolder}/.venv/bin/python"
+  },
+
+  // User to run as inside the container
+  "remoteUser": "vscode",
+
+  // Forward ports from the container to your local machine
+  "forwardPorts": [
+    8000,
+    8080,
+    8888,   // Jupyter notebooks
+    6006,   // TensorBoard
+    5000    // MLflow UI
+  ],
+
+  // Runs every time you attach to the container
+  "postAttachCommand": "bash .devcontainer/cpu/post-attach.sh"
+}
