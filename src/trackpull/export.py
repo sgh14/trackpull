@@ -176,6 +176,23 @@ def export(
                     )
                     n_history_missing += 1
                 else:
+                    # W&B may log different keys in separate metric tables
+                    # within the same step, so scan_history() can return
+                    # multiple rows sharing the same _step value.  Merge them
+                    # into one row per step (first non-None value wins for
+                    # each key) to avoid replicating the time series.
+                    step_map: dict[Any, dict[str, Any]] = {}
+                    step_order: list[Any] = []
+                    for row in history_rows:
+                        step = row.get("_step", id(row))
+                        if step not in step_map:
+                            step_map[step] = {}
+                            step_order.append(step)
+                        for k, v in row.items():
+                            if v is not None and k not in step_map[step]:
+                                step_map[step][k] = v
+                    history_rows = [step_map[s] for s in step_order]
+
                     run_arrays = {
                         f: np.array(
                             [r.get(f, np.nan) for r in history_rows], dtype=float
