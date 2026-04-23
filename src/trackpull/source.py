@@ -114,7 +114,13 @@ class WandbSource:
 
         # Strip None values — YAML nulls must not be forwarded to the W&B API
         filters = self.filters or {}
-        filters = {k: v for k, v in filters.items() if v is not None} or None
+        filters = {k: v for k, v in filters.items() if v is not None}
+        # Translate the friendly ``tags: [...]`` shorthand into the MongoDB
+        # ``$in`` operator that the W&B GraphQL API requires.  Passing a plain
+        # list causes a 500 Server Error.
+        if "tags" in filters and isinstance(filters["tags"], list):
+            filters["tags"] = {"$in": filters["tags"]}
+        filters = filters or None
 
         logger.info("Querying W&B project: %s", project_path)
         if filters:
