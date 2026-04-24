@@ -37,7 +37,7 @@ class RunRecord:
     config: dict[str, Any]
     summary: dict[str, Any]
     fetch_history: Callable[[], Iterator[dict[str, Any]]] = field(
-        default_factory=lambda: (lambda: iter([]))
+        default_factory=lambda: lambda: iter([])
     )
 
 
@@ -108,9 +108,7 @@ class WandbSource:
         import wandb
 
         api = wandb.Api()
-        project_path = (
-            f"{self.entity}/{self.project}" if self.entity else self.project
-        )
+        project_path = f"{self.entity}/{self.project}" if self.entity else self.project
 
         # Strip None values — YAML nulls must not be forwarded to the W&B API
         filters = self.filters or {}
@@ -120,6 +118,7 @@ class WandbSource:
         # list causes a 500 Server Error.
         if "tags" in filters and isinstance(filters["tags"], list):
             filters["tags"] = {"$in": filters["tags"]}
+
         filters = filters or None
 
         logger.info("Querying W&B project: %s", project_path)
