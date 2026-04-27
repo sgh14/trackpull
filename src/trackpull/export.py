@@ -1,14 +1,4 @@
-"""Export step — fetch runs from a source and write raw data to a store.
-
-Writes the ``points/`` group.  The aggregate step reads this group.
-
-Memory strategy
----------------
-Scalar data (config, summary) for all runs is accumulated in a list of dicts
-and written once at the end.  History data is streamed row-by-row via the
-store's ``open_writer`` context manager so peak memory is *O(T_i)* per run
-rather than *O(N × T_max × n_fields)*.
-"""
+"""Export step — fetch runs from a source and write ``points/`` to a store."""
 
 from __future__ import annotations
 
@@ -18,17 +8,13 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
+from tqdm import tqdm
 
-from trackpull.source import RunSource
-from trackpull.store import AnalysisStore
-from trackpull.transforms import apply_transforms, warn_untransformed_lists
+from trackpull.source import RunRecord, WandbSource
+from trackpull.store import POINTS_GROUP, HDF5Store
+from trackpull.transforms import _resolve_transform
 
 logger = logging.getLogger(__name__)
-
-
-# ---------------------------------------------------------------------------
-# Config
-# ---------------------------------------------------------------------------
 
 
 @dataclass
@@ -36,15 +22,13 @@ class ExportConfig:
     """Configuration for the export step.
 
     Args:
-        config_fields:   Run config field paths to extract, supporting
-                         dot-separated nested keys (e.g. ``"model.width"``).
-        summary_fields:  Run summary field names to extract.
-        history_fields:  Per-step history field names to extract.  When empty
-                         (the default), ``fetch_history`` is never called and
-                         no 2-D arrays are written.
-        transforms:      ``{field: transform_name}`` mapping applied before
-                         writing.  See :mod:`trackpull.transforms` for the
-                         full catalogue.
+        config_fields:  Run config paths to extract (dot-separated for nested
+                        keys, e.g. ``"model.width"``).
+        summary_fields: Run summary field names to extract.
+        history_fields: Per-step history field names to extract.  When empty
+                        (the default), ``fetch_history`` is never called.
+        transforms:     ``{field: transform_name}`` mapping applied before
+                        writing.  See :mod:`trackpull.transforms`.
     """
 
     config_fields: list[str]
@@ -53,23 +37,10 @@ class ExportConfig:
     transforms: dict[str, str] = field(default_factory=dict)
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def _get_nested_value(data: dict[str, Any], key: str, default: Any = None) -> Any:
-    """Retrieve a value from a nested dict using a dot-separated key path.
-
-    Examples::
-
-        _get_nested_value({"model": {"width": 64}}, "model.width")  # → 64
-        _get_nested_value({"lr": 0.01}, "lr")                        # → 0.01
-        _get_nested_value({}, "missing")                             # → None
-    """
-    parts = key.split(".")
+def _get_field_value(data: dict[str, Any], key: str, default: Any = None) -> Any:
+    """Retrieve a value from a nested dict using a dot-separated key path."""
     value: Any = data
-    for part in parts:
+    for part in key.split("."):
         if isinstance(value, dict) and part in value:
             value = value[part]
         else:
@@ -77,161 +48,104 @@ def _get_nested_value(data: dict[str, Any], key: str, default: Any = None) -> An
     return value
 
 
-def _extract_fields(
-    run,  # RunRecord
-    config_fields: list[str],
-    summary_fields: list[str],
-) -> dict[str, Any]:
-    """Extract named fields from a :class:`~trackpull.source.RunRecord`."""
-    data: dict[str, Any] = {"run_id": run.id}
-    for f in config_fields:
-        data[f] = _get_nested_value(run.config, f)
-    for f in summary_fields:
-        data[f] = _get_nested_value(run.summary, f)
-    return data
+def _build_array(values: list[Any]) -> np.ndarray:
+    """Build a numpy array from a list of per-run values.
 
-
-def _rows_to_scalar_arrays(
-    rows: list[dict[str, Any]],
-    all_fields: list[str],
-) -> dict[str, np.ndarray]:
-    """Convert a list of per-run dicts to a dict of per-field numpy arrays.
-
-    - ``None`` values → ``np.nan`` for numeric fields.
-    - String values (including ``run_id``) → ``object`` dtype array.
-    - List values are skipped with a warning (untransformed lists cannot be
-      stored as 1-D arrays).
+    - Scalar per run → shape ``(N,)``.
+    - Sequence per run → shape ``(N, max_length)`` with NaN / empty-string padding.
+    - ``None`` entries are treated as missing (NaN or empty string).
     """
-    result: dict[str, np.ndarray] = {}
-    for f in all_fields:
-        values = [row.get(f) for row in rows]
-        # Skip fields where any value is still a list (user forgot transform)
-        if any(isinstance(v, (list, tuple)) for v in values):
-            logger.warning(
-                "Field '%s' still contains list values after transforms — "
-                "skipping.  Add a transform to your config.",
-                f,
-            )
-            continue
-        # Detect string fields
-        non_none = [v for v in values if v is not None]
-        if non_none and isinstance(non_none[0], str):
-            result[f] = np.array(
-                [v if v is not None else "" for v in values], dtype=object
-            )
-        else:
-            result[f] = np.array(
-                [v if v is not None else np.nan for v in values], dtype=float
-            )
-    return result
+    arrays = []
+    for value in values:
+        arrays.append(np.atleast_1d(np.asarray(value)) if value is not None else None)
+
+    non_none = [a for a in arrays if a is not None]
+    if not non_none:
+        return np.full(len(values), np.nan)
+
+    is_string = non_none[0].dtype.kind in ("U", "S", "O")
+    if is_string:
+        empty_value = ""
+        dtype = object
+    else:
+        empty_value = np.nan
+        dtype = float
+        arrays = [a.astype(float) if a is not None else None for a in arrays]
+
+    max_length = max(a.shape[0] for a in non_none)
+    final_array = np.full((len(values), max_length), empty_value, dtype=dtype)
+    for i, array in enumerate(arrays):
+        if array is not None:
+            final_array[i, : array.shape[0]] = array
+
+    return final_array.squeeze(axis=1) if max_length == 1 else final_array
 
 
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
+def export_run_ids(runs: list[RunRecord], store: HDF5Store) -> None:
+    """Export run IDs as a separate field."""
+    runs_id = np.array([run.id for run in runs], dtype=object)
+    store.write_field(POINTS_GROUP, "run_id", runs_id)
 
 
-def export(
-    config: ExportConfig,
-    source: RunSource,
-    store: AnalysisStore,
+def export_config_fields(
+    runs: list[RunRecord], store: HDF5Store, config: ExportConfig
 ) -> None:
-    """Fetch runs from *source* and write raw data to *store*.
+    """Export config fields."""
+    for field_name in config.config_fields:
+        values = [_get_field_value(run.config, field_name) for run in runs]
+        if field_name in config.transforms:
+            transform = _resolve_transform(config.transforms[field_name])
+            values = [transform(value) for value in values]
 
-    Writes the ``points/`` group.  If called on a store that already contains
-    a ``points/`` group, it is overwritten.
+        store.write_field(POINTS_GROUP, field_name, _build_array(values))
 
-    Args:
-        config: Export configuration.
-        source: Run data source (e.g. :class:`~trackpull.source.WandbSource`).
-        store:  Storage backend (e.g. :class:`~trackpull.store.HDF5Store`).
 
-    Raises:
-        SystemExit: If no runs are returned by the source.
-    """
-    run_list = list(source.fetch())
-    N = len(run_list)
-    logger.info("Found %d runs", N)
+def export_summary_fields(
+    runs: list[RunRecord], store: HDF5Store, config: ExportConfig
+) -> None:
+    """Export summary fields."""
+    for field_name in config.summary_fields:
+        values = [run.summary.get(field_name) for run in runs]
+        if field_name in config.transforms:
+            transform = _resolve_transform(config.transforms[field_name])
+            values = [transform(value) for value in values]
 
-    if not run_list:
+        store.write_field(POINTS_GROUP, field_name, _build_array(values))
+
+
+def export_history_fields(
+    runs: list[RunRecord], store: HDF5Store, config: ExportConfig
+) -> None:
+    """Export history fields."""
+    for field_name in tqdm(config.history_fields, desc="history fields", unit="field"):
+        values = [
+            [step.get(field_name) for step in run.fetch_history(field_name)]
+            for run in runs
+        ]
+        store.write_field(POINTS_GROUP, field_name, _build_array(values))
+
+
+def export(config: ExportConfig, source: WandbSource, store: HDF5Store) -> None:
+    """Fetch runs from *source* and write ``points/`` to *store* one field at a time."""
+    runs = list(source.fetch())
+    if not runs:
         logger.error("No runs found. Check source/filter settings.")
         sys.exit(1)
 
-    all_scalar_fields = ["run_id"] + config.config_fields + config.summary_fields
-    rows: list[dict[str, Any]] = []
-    n_history_missing = 0
+    N = len(runs)
+    logger.info("Found %d runs", N)
 
-    with store.open_writer(N, config.history_fields) as writer:
-        for i, run in enumerate(run_list):
-            data = _extract_fields(run, config.config_fields, config.summary_fields)
-            rows.append(data)
+    store.clear_group(POINTS_GROUP)
+    export_run_ids(runs, store)
+    export_config_fields(runs, store, config)
+    export_summary_fields(runs, store, config)
+    export_history_fields(runs, store, config)
 
-            if config.history_fields:
-                history_rows = list(run.fetch_history())
-
-                if not history_rows:
-                    logger.warning(
-                        "Run %s: no history data — history columns will be NaN",
-                        run.id,
-                    )
-                    n_history_missing += 1
-                else:
-                    # W&B may log different keys in separate metric tables
-                    # within the same step, so scan_history() can return
-                    # multiple rows sharing the same _step value.  Merge them
-                    # into one row per step (first non-None value wins for
-                    # each key) to avoid replicating the time series.
-                    step_map: dict[Any, dict[str, Any]] = {}
-                    step_order: list[Any] = []
-                    for row in history_rows:
-                        step = row.get("_step", id(row))
-                        if step not in step_map:
-                            step_map[step] = {}
-                            step_order.append(step)
-                        for k, v in row.items():
-                            if v is not None and k not in step_map[step]:
-                                step_map[step][k] = v
-                    history_rows = [step_map[s] for s in step_order]
-
-                    run_arrays = {
-                        f: np.array(
-                            [r.get(f, np.nan) for r in history_rows], dtype=float
-                        )
-                        for f in config.history_fields
-                    }
-                    del history_rows
-
-                    if all(np.all(np.isnan(v)) for v in run_arrays.values()):
-                        logger.warning(
-                            "Run %s: all-NaN history — history columns will be NaN",
-                            run.id,
-                        )
-                        n_history_missing += 1
-                    else:
-                        T_i = len(run_arrays[config.history_fields[0]])
-                        writer.ensure_history_capacity(T_i)
-                        for f in config.history_fields:
-                            writer.write_history_row(f, i, run_arrays[f])
-
-                    del run_arrays
-
-        if not rows:
-            logger.error("No valid run data extracted. Exiting.")
-            sys.exit(1)
-
-        logger.info("Extracted data from %d runs", len(rows))
-
-        apply_transforms(rows, config.transforms)
-        warn_untransformed_lists(rows, config.transforms)
-
-        scalar_arrays = _rows_to_scalar_arrays(rows, all_scalar_fields)
-        writer.write_scalars(scalar_arrays)
-
-    if n_history_missing:
-        logger.warning(
-            "%d/%d run(s) had missing/all-NaN history; those rows are NaN-filled.",
-            n_history_missing,
-            N,
-        )
-
-    logger.info("Export complete → points/ group written")
+    logger.info(
+        "Export complete — %d runs, %d fields",
+        N,
+        1
+        + len(config.config_fields)
+        + len(config.summary_fields)
+        + len(config.history_fields),
+    )

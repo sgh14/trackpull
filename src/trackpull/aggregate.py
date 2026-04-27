@@ -29,7 +29,7 @@ from typing import Any, Literal
 
 import numpy as np
 
-from trackpull.store import POINTS_GROUP, STATISTICS_GROUP, AnalysisStore
+from trackpull.store import POINTS_GROUP, STATISTICS_GROUP, HDF5Store
 
 logger = logging.getLogger(__name__)
 
@@ -101,7 +101,122 @@ class AggregateConfig:
 # ---------------------------------------------------------------------------
 
 
-def aggregate(config: AggregateConfig, store: AnalysisStore) -> None:
+def validate_nan_policy(policy: str) -> None:
+    if policy not in NAN_POLICIES:
+        raise ValueError(
+            f"Invalid nan_policy '{policy}'. Must be one of {NAN_POLICIES}."
+        )
+
+
+def validate_group_by_fields(group_by: list[str], available_fields: list[str]) -> None:
+    for f in group_by:
+        if f not in available_fields:
+            raise ValueError(
+                f"group_by field '{f}' not found in points/. "
+                f"Available: {available_fields}"
+            )
+
+
+def validate_aggregations(
+    aggregations: dict[str, list[str]], available_fields: list[str]
+) -> None:
+    for column, funcs in aggregations.items():
+        if column not in available_fields:
+            raise ValueError(
+                f"Aggregation column '{column}' not found in points/. "
+                f"Available: {available_fields}"
+            )
+        for func_name in funcs:
+            if func_name not in AGG_FUNCTIONS:
+                raise ValueError(
+                    f"Unknown aggregation function '{func_name}'. "
+                    f"Available: {sorted(AGG_FUNCTIONS)}"
+                )
+
+
+def get_group_indices(
+    store: HDF5Store, config: AggregateConfig, available_fields: list[str]
+) -> tuple[list[tuple], dict[tuple, list[int]]]:
+    if config.group_by:
+        n_runs = len(store.read_field(POINTS_GROUP, config.group_by[0]))
+        group_arrays = [
+            store.read_field(POINTS_GROUP, group_field)
+            for group_field in config.group_by
+        ]
+        groups_indices: dict[tuple, list[int]] = {}
+        for i in range(n_runs):
+            key = tuple(arr[i] for arr in group_arrays)
+            groups_indices.setdefault(key, []).append(i)
+    else:
+        n_runs = len(store.read_field(POINTS_GROUP, available_fields[0]))
+        groups_indices = {(): list(range(n_runs))}
+
+    sorted_keys = sorted(groups_indices.keys())
+    logger.info(
+        "Found %d unique group(s) for group_by=%s", len(sorted_keys), config.group_by
+    )
+
+    return sorted_keys, groups_indices
+
+
+def aggregate_field(
+    field_array: np.ndarray,
+    sorted_keys: list[tuple],
+    groups_indices: dict[tuple, list[int]],
+    agg_func: Any,
+) -> tuple[list[Any], list[tuple], list[tuple]]:
+    values = []
+    input_nans = []
+    output_nans = []
+
+    for group in sorted_keys:
+        indices = groups_indices[group]
+        field_slice = field_array[indices]  # (n_group,) or (n_group, T)
+        value = agg_func(field_slice)
+        values.append(value)
+
+        # Track input NaNs
+        n_nan = int(np.isnan(field_slice).sum())
+        if n_nan > 0:
+            input_nans.append((group, n_nan))
+
+        # Track output NaNs
+        if np.any(np.isnan(value)):
+            output_nans.append(group)
+
+    return values, input_nans, output_nans
+
+
+def handle_nan_inputs(
+    nan_policy: str, nan_input_report: dict[str, list[tuple]]
+) -> None:
+    if nan_input_report:
+        lines = []
+        for col, entries in sorted(nan_input_report.items()):
+            total = sum(cnt for _, cnt in entries)
+            lines.append(f"  '{col}': {len(entries)} group(s), {total} NaN value(s)")
+        msg = "NaN inputs detected during aggregation:\n" + "\n".join(lines)
+        if nan_policy == "ignore":
+            pass
+        elif nan_policy == "warn":
+            logger.warning(msg)
+        elif nan_policy == "raise":
+            raise ValueError(msg)
+
+
+def handle_nan_outputs(nan_output_report: dict[str, list[tuple]]) -> None:
+    if nan_output_report:
+        lines = [
+            f"  '{k}': {len(groups)} group(s)"
+            for k, groups in sorted(nan_output_report.items())
+        ]
+        logger.warning(
+            "NaN values in aggregated statistics (will affect plots):\n%s",
+            "\n".join(lines),
+        )
+
+
+def aggregate(config: AggregateConfig, store: HDF5Store) -> None:
     """Group and aggregate data from the ``points/`` group.
 
     Reads ``points/`` from *store* and writes ``statistics/`` to the same
@@ -117,144 +232,52 @@ def aggregate(config: AggregateConfig, store: AnalysisStore) -> None:
                     an aggregation function name is unknown, or if
                     ``nan_policy="raise"`` and NaN inputs are detected.
     """
-    if config.nan_policy not in NAN_POLICIES:
-        raise ValueError(
-            f"Invalid nan_policy '{config.nan_policy}'. "
-            f"Must be one of {NAN_POLICIES}."
-        )
-
     available_fields = store.list_fields(POINTS_GROUP)
     logger.info("points/ fields: %s", available_fields)
 
-    # Validate group_by fields
-    for f in config.group_by:
-        if f not in available_fields:
-            raise ValueError(
-                f"group_by field '{f}' not found in points/. "
-                f"Available: {available_fields}"
-            )
-
-    # Validate aggregation columns and function names
-    for column, funcs in config.aggregations.items():
-        if column not in available_fields:
-            logger.warning(
-                "Aggregation column '%s' not in points/ — skipping", column
-            )
-        for func_name in funcs:
-            if func_name not in AGG_FUNCTIONS:
-                raise ValueError(
-                    f"Unknown aggregation function '{func_name}'. "
-                    f"Available: {sorted(AGG_FUNCTIONS)}"
-                )
-
-    # Build composite group index (only loads group_by columns)
-    if config.group_by:
-        n_runs = len(store.read_column(POINTS_GROUP, config.group_by[0]))
-        group_arrays = [
-            store.read_column(POINTS_GROUP, f) for f in config.group_by
-        ]
-        composite_keys: dict[tuple, list[int]] = {}
-        for i in range(n_runs):
-            key = tuple(arr[i] for arr in group_arrays)
-            composite_keys.setdefault(key, []).append(i)
-    else:
-        n_runs = len(store.read_column(POINTS_GROUP, available_fields[0]))
-        composite_keys = {(): list(range(n_runs))}
-
-    sorted_keys = sorted(composite_keys.keys())
-    G = len(sorted_keys)
-    logger.info("Found %d unique group(s) for group_by=%s", G, config.group_by)
+    validate_nan_policy(config.nan_policy)
+    validate_group_by_fields(config.group_by, available_fields)
+    validate_aggregations(config.aggregations, available_fields)
 
     # Choose aggregation functions according to nan_policy
-    agg_fns = (
-        _STRICT_AGG_FUNCTIONS
-        if config.nan_policy == "raise"
-        else AGG_FUNCTIONS
-    )
+    if config.nan_policy == "raise":
+        agg_funcs = _STRICT_AGG_FUNCTIONS
+    else:
+        agg_funcs = AGG_FUNCTIONS
 
-    results: dict[str, Any] = {}
-
-    # Store group-by columns in statistics
-    for col_idx, f in enumerate(config.group_by):
-        results[f] = np.array([k[col_idx] for k in sorted_keys])
-
-    # NaN tracking
     nan_input_report: dict[str, list[tuple]] = {}
     nan_output_report: dict[str, list[tuple]] = {}
 
-    for column, funcs in config.aggregations.items():
-        if column not in available_fields:
-            continue
+    # Build composite group index (only loads group_by columns)
+    sorted_keys, groups_indices = get_group_indices(store, config, available_fields)
 
-        # Load one column at a time; release memory after aggregation
-        col_data = store.read_column(POINTS_GROUP, column).astype(float)
+    store.clear_group(STATISTICS_GROUP)
 
-        for func_name in funcs:
-            if func_name not in agg_fns:
-                continue
-
-            # Output key: "first" uses the column name directly
-            output_key = column if func_name == "first" else f"{func_name}_{column}"
-            agg_fn = agg_fns[func_name]
-            values = []
-
-            for composite_key in sorted_keys:
-                indices = composite_keys[composite_key]
-                group_slice = col_data[indices]  # (n_group,) or (n_group, T)
-
-                # Track input NaNs
-                n_nan = int(np.isnan(group_slice).sum())
-                if n_nan > 0:
-                    nan_input_report.setdefault(column, []).append(
-                        (composite_key, n_nan)
-                    )
-
-                value = agg_fn(group_slice)
-                values.append(value)
-
-                # Track output NaNs
-                if np.any(np.isnan(value)):
-                    nan_output_report.setdefault(output_key, []).append(
-                        composite_key
-                    )
-
-            results[output_key] = np.array(values)
-
-        del col_data
-
-    # Handle input NaN report according to policy
-    if nan_input_report:
-        lines = []
-        for col, entries in sorted(nan_input_report.items()):
-            total = sum(cnt for _, cnt in entries)
-            lines.append(
-                f"  '{col}': {len(entries)} group(s), {total} NaN value(s)"
-            )
-        msg = "NaN inputs detected during aggregation:\n" + "\n".join(lines)
-        if config.nan_policy == "ignore":
-            pass
-        elif config.nan_policy == "warn":
-            logger.warning(msg)
-        elif config.nan_policy == "raise":
-            raise ValueError(msg)
-
-    # Always warn about NaN outputs — these silently break downstream plots
-    if nan_output_report:
-        lines = [
-            f"  '{k}': {len(groups)} group(s)"
-            for k, groups in sorted(nan_output_report.items())
-        ]
-        logger.warning(
-            "NaN values in aggregated statistics (will affect plots):\n%s",
-            "\n".join(lines),
+    # Write group-by index columns
+    for i, group_field in enumerate(config.group_by):
+        store.write_field(
+            STATISTICS_GROUP,
+            group_field,
+            np.array([key[i] for key in sorted_keys]),
         )
 
-    store.write(
-        STATISTICS_GROUP,
-        results,
-        metadata={
-            "group_by": str(config.group_by),
-            "n_groups": G,
-        },
+    for column_name, func_names in config.aggregations.items():
+        field_array = store.read_field(POINTS_GROUP, column_name).astype(float)
+        for func_name in func_names:
+            output_key = f"{func_name}_{column_name}"
+            agg_func = agg_funcs[func_name]
+            values, input_nans, output_nans = aggregate_field(
+                field_array,
+                sorted_keys,
+                groups_indices,
+                agg_func,
+            )
+            store.write_field(STATISTICS_GROUP, output_key, np.array(values))
+            nan_input_report.setdefault(column_name, []).extend(input_nans)
+            nan_output_report.setdefault(output_key, []).extend(output_nans)
+
+    handle_nan_inputs(config.nan_policy, nan_input_report)
+    handle_nan_outputs(nan_output_report)
+    logger.info(
+        "Aggregate complete → statistics/ group written (%d groups)", len(sorted_keys)
     )
-    logger.info("Aggregate complete → statistics/ group written (%d groups)", G)

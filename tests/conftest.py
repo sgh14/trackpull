@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-import numpy as np
 import pytest
 
 from trackpull.source import RunRecord
-from trackpull.store import HDF5Store, InMemoryStore
-
+from trackpull.store import HDF5Store
 
 # ---------------------------------------------------------------------------
 # Mock run data
@@ -20,7 +18,7 @@ def _make_runs() -> list[RunRecord]:
             id="r1",
             config={"model": {"width": 64}, "seed": 0},
             summary={"energy": -1.2, "variance": 0.05},
-            fetch_history=lambda: iter(
+            fetch_history=lambda key: iter(
                 [
                     {"energy_step": -0.5, "_step": 0},
                     {"energy_step": -1.0, "_step": 1},
@@ -32,7 +30,7 @@ def _make_runs() -> list[RunRecord]:
             id="r2",
             config={"model": {"width": 64}, "seed": 1},
             summary={"energy": -1.5, "variance": 0.04},
-            fetch_history=lambda: iter(
+            fetch_history=lambda key: iter(
                 [
                     {"energy_step": -0.6, "_step": 0},
                     {"energy_step": -1.1, "_step": 1},
@@ -44,7 +42,7 @@ def _make_runs() -> list[RunRecord]:
             id="r3",
             config={"model": {"width": 128}, "seed": 0},
             summary={"energy": -2.0, "variance": 0.02},
-            fetch_history=lambda: iter(
+            fetch_history=lambda key: iter(
                 [
                     {"energy_step": -0.8, "_step": 0},
                     {"energy_step": -1.5, "_step": 1},
@@ -71,11 +69,6 @@ def mock_runs() -> list[RunRecord]:
 @pytest.fixture
 def mock_source(mock_runs):
     return _MockSource(mock_runs)
-
-
-@pytest.fixture
-def memory_store() -> InMemoryStore:
-    return InMemoryStore()
 
 
 @pytest.fixture

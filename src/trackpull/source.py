@@ -1,4 +1,4 @@
-"""Run data model and source protocol.
+"""Run data model and W&B source.
 
 ``WandbSource`` requires the ``[wandb]`` optional extra::
 
@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Callable, Iterator, Protocol, runtime_checkable
+from typing import Any, Callable, Iterator
+
+import wandb
 
 logger = logging.getLogger(__name__)
 
@@ -36,27 +38,9 @@ class RunRecord:
     id: str
     config: dict[str, Any]
     summary: dict[str, Any]
-    fetch_history: Callable[[], Iterator[dict[str, Any]]] = field(
-        default_factory=lambda: lambda: iter([])
+    fetch_history: Callable[[str], Iterator[dict[str, Any]]] = field(
+        default_factory=lambda: lambda key: iter([])
     )
-
-
-# ---------------------------------------------------------------------------
-# Protocol
-# ---------------------------------------------------------------------------
-
-
-@runtime_checkable
-class RunSource(Protocol):
-    """Protocol for experiment run data sources.
-
-    Any class with a ``fetch()`` method that yields :class:`RunRecord` objects
-    satisfies this protocol — no inheritance required.
-    """
-
-    def fetch(self) -> Iterator[RunRecord]:
-        """Yield :class:`RunRecord` objects one at a time."""
-        ...
 
 
 # ---------------------------------------------------------------------------
@@ -67,20 +51,12 @@ class RunSource(Protocol):
 class WandbSource:
     """Fetch runs from a Weights & Biases project.
 
-    Satisfies :class:`RunSource`.
-
     Args:
         project: W&B project name (e.g. ``"my-project"``).
         entity:  W&B entity (username or team).  ``None`` uses the default
                  entity from the active wandb login.
-        filters: W&B API filter dict.  Supported keys:
-
-                 ``tags``
-                     List of tag strings.  W&B applies AND semantics.
-
+        filters: W&B API filter dict passed directly to ``wandb.Api().runs()``.
                  ``None`` means no filtering (all runs are returned).
-                 Keys whose value is ``None`` are silently dropped so that
-                 YAML ``null`` values do not accidentally filter runs.
 
     Raises:
         ImportError: If ``wandb`` is not installed.
@@ -92,40 +68,20 @@ class WandbSource:
         entity: str | None = None,
         filters: dict[str, Any] | None = None,
     ) -> None:
-        try:
-            import wandb  # noqa: F401
-        except ImportError as exc:
-            raise ImportError(
-                "WandbSource requires wandb.  Install it with:\n"
-                "  pip install trackpull[wandb]"
-            ) from exc
         self.project = project
         self.entity = entity
         self.filters = filters
 
     def fetch(self) -> Iterator[RunRecord]:
         """Yield one :class:`RunRecord` per W&B run matching the filters."""
-        import wandb
-
         api = wandb.Api()
         project_path = f"{self.entity}/{self.project}" if self.entity else self.project
 
-        # Strip None values — YAML nulls must not be forwarded to the W&B API
-        filters = self.filters or {}
-        filters = {k: v for k, v in filters.items() if v is not None}
-        # Translate the friendly ``tags: [...]`` shorthand into the MongoDB
-        # ``$in`` operator that the W&B GraphQL API requires.  Passing a plain
-        # list causes a 500 Server Error.
-        if "tags" in filters and isinstance(filters["tags"], list):
-            filters["tags"] = {"$in": filters["tags"]}
-
-        filters = filters or None
-
         logger.info("Querying W&B project: %s", project_path)
-        if filters:
-            logger.info("Filters: %s", filters)
+        if self.filters:
+            logger.info("Filters: %s", self.filters)
 
-        runs = api.runs(project_path, filters=filters)
+        runs = api.runs(project_path, filters=self.filters)
         for run in runs:
             yield self._to_record(run)
 
@@ -136,5 +92,5 @@ class WandbSource:
             config=dict(run.config),
             summary=dict(run.summary),
             # Bind run in default arg to capture by value, not by reference
-            fetch_history=lambda r=run: iter(r.scan_history()),
+            fetch_history=lambda key, r=run: iter(r.scan_history(keys=[key])),
         )

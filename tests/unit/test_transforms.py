@@ -2,16 +2,11 @@
 
 from __future__ import annotations
 
-import logging
-
 import pytest
 
 from trackpull.transforms import (
     TRANSFORM_FUNCTIONS,
-    apply_transforms,
-    warn_untransformed_lists,
 )
-
 
 # ---------------------------------------------------------------------------
 # Individual transform functions
@@ -61,16 +56,6 @@ class TestTransformFunctions:
 
     def test_str(self):
         assert TRANSFORM_FUNCTIONS["str"]([1, 2]) == "[1, 2]"
-
-    def test_unwrap_single(self):
-        assert TRANSFORM_FUNCTIONS["unwrap"]([42]) == 42
-
-    def test_unwrap_multi_raises(self):
-        with pytest.raises(ValueError, match="Cannot unwrap"):
-            TRANSFORM_FUNCTIONS["unwrap"]([1, 2])
-
-    def test_unwrap_scalar(self):
-        assert TRANSFORM_FUNCTIONS["unwrap"](7) == 7
 
 
 class TestParameterisedTransforms:
@@ -124,59 +109,3 @@ class TestResolveTransform:
 
         with pytest.raises(ValueError, match="Unknown transform"):
             _resolve_transform("nonexistent")
-
-
-# ---------------------------------------------------------------------------
-# apply_transforms
-# ---------------------------------------------------------------------------
-
-
-class TestApplyTransforms:
-    def test_mutates_in_place(self):
-        rows = [{"x": [1, 2, 3]}, {"x": [4, 5, 6]}]
-        apply_transforms(rows, {"x": "first"})
-        assert rows[0]["x"] == 1
-        assert rows[1]["x"] == 4
-
-    def test_noop_on_empty_transforms(self):
-        rows = [{"x": [1, 2]}]
-        apply_transforms(rows, {})
-        assert rows[0]["x"] == [1, 2]
-
-    def test_unknown_transform_raises(self):
-        rows = [{"x": 1}]
-        with pytest.raises(ValueError, match="Unknown transform"):
-            apply_transforms(rows, {"x": "bogus"})
-
-    def test_missing_field_skipped(self):
-        rows = [{"a": 1}]
-        apply_transforms(rows, {"b": "first"})  # field "b" not in row → no error
-        assert rows[0] == {"a": 1}
-
-
-# ---------------------------------------------------------------------------
-# warn_untransformed_lists
-# ---------------------------------------------------------------------------
-
-
-class TestWarnUntransformedLists:
-    def test_warns_on_list_field(self, caplog):
-        rows = [{"x": [1, 2, 3]}]
-        with caplog.at_level(logging.WARNING, logger="trackpull.transforms"):
-            warn_untransformed_lists(rows, {})
-        assert "x" in caplog.text
-
-    def test_no_warn_if_field_in_transforms(self, caplog):
-        rows = [{"x": [1, 2, 3]}]
-        with caplog.at_level(logging.WARNING, logger="trackpull.transforms"):
-            warn_untransformed_lists(rows, {"x": "first"})
-        assert "x" not in caplog.text
-
-    def test_no_warn_on_scalar(self, caplog):
-        rows = [{"x": 42}]
-        with caplog.at_level(logging.WARNING, logger="trackpull.transforms"):
-            warn_untransformed_lists(rows, {})
-        assert caplog.text == ""
-
-    def test_empty_rows(self):
-        warn_untransformed_lists([], {})  # must not raise

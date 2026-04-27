@@ -9,9 +9,6 @@ Usage::
     # Run full pipeline (export + aggregate)
     trackpull --config-dir=conf/analysis -cn my_experiment
 
-    # Re-aggregate only (skip export, reuse existing HDF5)
-    trackpull --config-dir=conf/analysis -cn my_experiment "+steps=[aggregate]"
-
     # Hydra multirun sweep
     trackpull --config-dir=conf/analysis -cn my_experiment \\
         "source.filters.tags=[v1]","source.filters.tags=[v2]" -m
@@ -51,23 +48,15 @@ from __future__ import annotations
 import logging
 import sys
 
-logger = logging.getLogger(__name__)
-
-# Guard — raise a clear error if hydra is not installed
-try:
-    import hydra
-    from omegaconf import DictConfig, OmegaConf
-except ImportError as _exc:
-    raise ImportError(
-        "The trackpull CLI requires Hydra.  Install it with:\n"
-        "  pip install trackpull[hydra]"
-    ) from _exc
+import hydra
+from omegaconf import DictConfig, OmegaConf
 
 from trackpull.aggregate import AggregateConfig, aggregate
 from trackpull.export import ExportConfig, export
 from trackpull.source import WandbSource
 from trackpull.store import HDF5Store
 
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # DictConfig → dataclass converters
@@ -100,8 +89,7 @@ def _aggregate_config_from_cfg(cfg: DictConfig) -> AggregateConfig:
     agg = cfg.get("aggregate") or {}
     raw_aggs = OmegaConf.to_container(agg.get("aggregations") or {}, resolve=True)
     aggregations = {
-        col: ([v] if isinstance(v, str) else list(v))
-        for col, v in raw_aggs.items()
+        col: ([v] if isinstance(v, str) else list(v)) for col, v in raw_aggs.items()
     }
     return AggregateConfig(
         group_by=list(agg.get("group_by") or []),
@@ -128,20 +116,13 @@ def _run(cfg: DictConfig) -> None:
         logger.error("'output' path is required in the config.")
         sys.exit(1)
 
-    steps_raw = cfg.get("steps", "all")
-    if steps_raw == "all":
-        steps = {"export", "aggregate"}
-    else:
-        steps = set(steps_raw) if not isinstance(steps_raw, str) else {steps_raw}
-
     store = HDF5Store(cfg.output)
 
-    if "export" in steps:
-        source = _source_from_cfg(cfg)
-        export_config = _export_config_from_cfg(cfg)
-        export(export_config, source, store)
+    source = _source_from_cfg(cfg)
+    export_config = _export_config_from_cfg(cfg)
+    export(export_config, source, store)
 
-    if "aggregate" in steps and cfg.get("aggregate"):
+    if cfg.get("aggregate"):
         aggregate_config = _aggregate_config_from_cfg(cfg)
         aggregate(aggregate_config, store)
 
