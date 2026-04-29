@@ -29,17 +29,18 @@ class RunRecord:
     accessed via dot-separated strings in :class:`~trackpull.export.ExportConfig`
     (e.g. ``"model.width"``).
 
-    ``fetch_history`` is a zero-argument callable that returns an iterator of
-    per-step dicts, e.g. ``[{"loss": 0.5, "_step": 0}, ...]``.  It is called
-    at most once per run and only when
+    ``fetch_history`` accepts an optional *keys* list and returns an iterator of
+    per-step dicts, e.g. ``[{"loss": 0.5, "_step": 0}, ...]``.  When *keys* is
+    provided only those columns are fetched from the source, reducing I/O.  It
+    is called at most once per run and only when
     :attr:`~trackpull.export.ExportConfig.history_fields` is non-empty.
     """
 
     id: str
     config: dict[str, Any]
     summary: dict[str, Any]
-    fetch_history: Callable[[str], Iterator[dict[str, Any]]] = field(
-        default_factory=lambda: lambda key: iter([])
+    fetch_history: Callable[[list[str] | None], Iterator[dict[str, Any]]] = field(
+        default_factory=lambda: lambda keys=None: iter([])
     )
 
 
@@ -92,5 +93,5 @@ class WandbSource:
             config=dict(run.config),
             summary=dict(run.summary),
             # Bind run in default arg to capture by value, not by reference
-            fetch_history=lambda key, r=run: iter(r.scan_history(keys=[key])),
+            fetch_history=lambda keys=None, r=run: iter(r.scan_history(keys=keys)),
         )

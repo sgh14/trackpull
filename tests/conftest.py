@@ -18,7 +18,7 @@ def _make_runs() -> list[RunRecord]:
             id="r1",
             config={"model": {"width": 64}, "seed": 0},
             summary={"energy": -1.2, "variance": 0.05},
-            fetch_history=lambda key: iter(
+            fetch_history=lambda keys=None: iter(
                 [
                     {"energy_step": -0.5, "_step": 0},
                     {"energy_step": -1.0, "_step": 1},
@@ -30,7 +30,7 @@ def _make_runs() -> list[RunRecord]:
             id="r2",
             config={"model": {"width": 64}, "seed": 1},
             summary={"energy": -1.5, "variance": 0.04},
-            fetch_history=lambda key: iter(
+            fetch_history=lambda keys=None: iter(
                 [
                     {"energy_step": -0.6, "_step": 0},
                     {"energy_step": -1.1, "_step": 1},
@@ -42,7 +42,7 @@ def _make_runs() -> list[RunRecord]:
             id="r3",
             config={"model": {"width": 128}, "seed": 0},
             summary={"energy": -2.0, "variance": 0.02},
-            fetch_history=lambda key: iter(
+            fetch_history=lambda keys=None: iter(
                 [
                     {"energy_step": -0.8, "_step": 0},
                     {"energy_step": -1.5, "_step": 1},

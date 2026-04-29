@@ -84,18 +84,23 @@ Run:
 # Full pipeline (export + aggregate)
 trackpull --config-dir=conf/analysis -cn my_experiment
 
-# Re-aggregate only
-trackpull --config-dir=conf/analysis -cn my_experiment "+steps=[aggregate]"
-
 # Hydra multirun sweep
 trackpull --config-dir=conf/analysis -cn my_experiment \
     "source.filters.tags=[v1]","source.filters.tags=[v2]" -m
 ```
 
+Note: the CLI runs export first, then aggregate when an `aggregate:` section is
+present in the config.
+
 ## HDF5 schema
 
 ```
 results.h5
+├── runs/            ← transient run cache used during export
+│   └── <run_id>/
+│       ├── config   (JSON string)
+│       ├── summary  (JSON string)
+│       └── history/...
 ├── points/          ← one value per run
 │   ├── run_id       (N,) str
 │   ├── model.width  (N,) float
@@ -111,7 +116,8 @@ results.h5
 ## Extending trackpull
 
 Custom backends are supported via structural subtyping — no inheritance
-required.  Implement the `RunSource` protocol to add a new source:
+required. A source backend only needs a `fetch()` method that yields
+`RunRecord` objects.
 
 ```python
 from typing import Iterator
@@ -124,6 +130,7 @@ class MySource:
                 id=run.id,
                 config=run.config,
                 summary=run.metrics,
+                fetch_history=lambda keys=None, r=run: iter(r.history(keys=keys)),
             )
 ```
 

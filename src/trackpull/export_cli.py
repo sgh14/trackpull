@@ -7,17 +7,17 @@ Requires the ``[hydra]`` optional extra::
 Usage::
 
     # Run full pipeline (export + aggregate)
-    trackpull --config-dir=conf/analysis -cn my_experiment
+    trackpull --config-dir=conf -cn example
 
     # Hydra multirun sweep
-    trackpull --config-dir=conf/analysis -cn my_experiment \\
+    trackpull --config-dir=conf -cn example \\
         "source.filters.tags=[v1]","source.filters.tags=[v2]" -m
 
 YAML schema
 -----------
 ::
 
-    # conf/analysis/my_experiment.yaml
+    # conf/example.yaml
     # @package _global_
 
     source:
@@ -58,8 +58,9 @@ from trackpull.store import HDF5Store
 
 logger = logging.getLogger(__name__)
 
+
 # ---------------------------------------------------------------------------
-# DictConfig → dataclass converters
+# DictConfig -> dataclass converters
 # ---------------------------------------------------------------------------
 
 
@@ -107,7 +108,7 @@ def _aggregate_config_from_cfg(cfg: DictConfig) -> AggregateConfig:
 def _run(cfg: DictConfig) -> None:
     logging.basicConfig(
         level=logging.INFO,
-        format="%(asctime)s %(levelname)-8s %(name)s — %(message)s",
+        format="%(asctime)s %(levelname)-8s %(name)s - %(message)s",
         datefmt="%H:%M:%S",
     )
     logger.info("Configuration:\n%s", OmegaConf.to_yaml(cfg))
@@ -126,7 +127,7 @@ def _run(cfg: DictConfig) -> None:
         aggregate_config = _aggregate_config_from_cfg(cfg)
         aggregate(aggregate_config, store)
 
-    logger.info("Done → %s", cfg.output)
+    logger.info("Done -> %s", cfg.output)
 
 
 def main() -> None:

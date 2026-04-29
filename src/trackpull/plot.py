@@ -87,7 +87,7 @@ class ReferenceLineConfig:
 @dataclass
 class TimeseriesPlotConfig:
     output_name: str
-    color_by: str = "label"
+    color_by: str | list[str] = "label"
     x_axis: AxisConfig | None = None
     y_axis: AxisConfig = field(default_factory=AxisConfig)
     line: LineConfig = field(default_factory=LineConfig)
@@ -97,7 +97,7 @@ class TimeseriesPlotConfig:
 @dataclass
 class TrendPlotConfig:
     output_name: str
-    color_by: str = "label"
+    color_by: str | list[str] = "label"
     x_axis: AxisConfig = field(default_factory=AxisConfig)
     y_axis: AxisConfig = field(default_factory=AxisConfig)
     line: LineConfig = field(default_factory=LineConfig)
@@ -343,17 +343,45 @@ def _detect_scale(data: np.ndarray) -> str:
 
 
 def _color_values(
-    inp: InputConfig, fields: dict[str, np.ndarray], color_by: str, n: int
+    inp: InputConfig,
+    fields: dict[str, np.ndarray],
+    color_by: str | list[str],
+    n: int,
 ) -> np.ndarray:
     """Return the per-row color group key: input label or a field array."""
-    if color_by != "label":
-        return fields[color_by]
+    color_fields = _color_by_fields(color_by)
+    if color_fields:
+        if len(color_fields) == 1:
+            return fields[color_fields[0]]
+
+        values: list[tuple[Any, ...]] = []
+        for i in range(n):
+            values.append(
+                tuple(
+                    fields[name][i].item()
+                    if hasattr(fields[name][i], "item")
+                    else fields[name][i]
+                    for name in color_fields
+                )
+            )
+        keys = np.empty(n, dtype=object)
+        keys[:] = values
+        return keys
+
     label = (
         resolve_label(inp, fields, row=0)
         if n > 0
         else (inp.label or Path(inp.path).stem)
     )
     return np.array([label] * n)
+
+
+def _color_by_fields(color_by: str | list[str]) -> list[str]:
+    """Return normalized color-by field names; empty means use input label."""
+    if isinstance(color_by, str):
+        return [] if color_by == "label" else [color_by]
+
+    return [name for name in color_by if name != "label"]
 
 
 _INTERP_GRID_N = 1000  # resolution of the common time grid used when averaging runs
@@ -496,7 +524,7 @@ def _iter_trend_groups(
 def _timeseries_needed(
     y_field: str,
     x_field: str | None,
-    color_by: str,
+    color_by: str | list[str],
     master_cfg: MasterPlotConfig,
     inp: InputConfig,
 ) -> list[str]:
@@ -504,8 +532,7 @@ def _timeseries_needed(
     names: list[str] = [f"mean_{y_field}", f"std_{y_field}"]
     if x_field:
         names.append(f"mean_{x_field}")
-    if color_by != "label":
-        names.append(color_by)
+    names.extend(_color_by_fields(color_by))
     names.extend(master_cfg.filter.keys())
     if master_cfg.select:
         names.append(master_cfg.select.by)
@@ -517,15 +544,14 @@ def _timeseries_needed(
 def _trend_needed(
     y_field: str,
     x_field: str,
-    color_by: str,
+    color_by: str | list[str],
     master_cfg: MasterPlotConfig,
     inp: InputConfig,
     ref_fields: list[str],
 ) -> list[str]:
     """Collect statistics/ field names needed for a trend group iteration."""
     names: list[str] = [x_field, f"mean_{y_field}", f"std_{y_field}"]
-    if color_by != "label":
-        names.append(color_by)
+    names.extend(_color_by_fields(color_by))
     names.extend(master_cfg.filter.keys())
     if master_cfg.select:
         names.append(master_cfg.select.by)

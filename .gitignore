@@ -8,6 +8,7 @@ venv/
 .env
 .uv-cache/
 *.h5
+*.yaml
 outputs/
 multirun/
 .hydra/
@@ -15,3 +16,4 @@ multirun/
 htmlcov/
 .pytest_cache/
 .ruff_cache/
+prp/

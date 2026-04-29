@@ -43,8 +43,8 @@ dependencies = [
 dev   = ["pytest>=8.0", "pytest-cov", "ruff", "pre-commit"]
 
 [project.scripts]
-trackpull = "trackpull.cli:main"
-trackplot = "trackpull.plotcli:main"
+trackpull = "trackpull.export_cli:main"
+trackplot = "trackpull.plot_cli:main"
 
 [project.urls]
 Homepage = "https://github.com/sgh14/trackpull"

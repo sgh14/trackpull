@@ -3,18 +3,16 @@
 Usage::
 
     # Single plot (type specified in child YAML)
-    trackplot --config-dir=conf/plots -cn hyperparameter-comparison
+    trackplot --config-dir=conf --config-name=example_plot "plot=timeseries_energy"
 
     # Hydra multirun sweep over filter combinations
-    trackplot --config-dir=conf/plots -cn hyperparameter-comparison \\
-        "+plot.filter.graph.length=12,16" \\
-        "plot=timeseries_energy,trend_energy_vs_width" -m
+    trackplot --config-dir=conf --config-name=example_plot -m
 
 YAML schema
 -----------
 ::
 
-    # conf/plots/hyperparameter-comparison.yaml
+        # conf/example_plot.yaml
     defaults:
       - _self_
       - plot: null   # specify via CLI or Hydra sweeper
@@ -35,7 +33,7 @@ YAML schema
         dir: report/figures
         formats: [pdf, png, svg]
 
-    # conf/plots/plot/timeseries_energy.yaml
+    # conf/plot/timeseries_energy.yaml
     type: timeseries
     output:
       name: energy_vs_time
@@ -53,11 +51,11 @@ YAML schema
       enabled: true
       alpha: 0.2
 
-    # conf/plots/plot/trend_energy_vs_width.yaml
+    # conf/plot/trend_energy_vs_width.yaml
     type: trend
     output:
       name: energy_vs_width
-    color_by: vstate.n_samples
+    color_by: [vstate.n_samples, graph.length]
     axes:
       x:
         field: model.hidden_dims
@@ -105,8 +103,9 @@ from trackpull.plot import (
 
 logger = logging.getLogger(__name__)
 
+
 # ---------------------------------------------------------------------------
-# DictConfig → dataclass converters  (one per config concept)
+# DictConfig -> dataclass converters  (one per config concept)
 # ---------------------------------------------------------------------------
 
 
@@ -184,12 +183,24 @@ def _master_from_cfg(cfg: DictConfig) -> MasterPlotConfig:
     )
 
 
+def _color_by_from_cfg(plot: DictConfig) -> str | list[str]:
+    """Normalize color_by from YAML into str or list[str]."""
+    color_by = plot.get("color_by", "label")
+    if isinstance(color_by, str):
+        return color_by
+
+    raw = OmegaConf.to_container(color_by, resolve=True)
+    if isinstance(raw, list):
+        return [str(value) for value in raw]
+    return "label"
+
+
 def _timeseries_from_cfg(cfg: DictConfig) -> TimeseriesPlotConfig:
     plot = cfg.plot
     axes = plot.get("axes") or {}
     return TimeseriesPlotConfig(
         output_name=(plot.get("output") or {}).get("name", "plot"),
-        color_by=plot.get("color_by", "label"),
+        color_by=_color_by_from_cfg(plot),
         x_axis=_axis_from_cfg(axes.get("x")),
         y_axis=_axis_from_cfg(axes.get("y")) or AxisConfig(),
         line=_line_from_cfg(plot.get("line")),
@@ -202,7 +213,7 @@ def _trend_from_cfg(cfg: DictConfig) -> TrendPlotConfig:
     axes = plot.get("axes") or {}
     return TrendPlotConfig(
         output_name=(plot.get("output") or {}).get("name", "plot"),
-        color_by=plot.get("color_by", "label"),
+        color_by=_color_by_from_cfg(plot),
         x_axis=_axis_from_cfg(axes.get("x")) or AxisConfig(),
         y_axis=_axis_from_cfg(axes.get("y")) or AxisConfig(),
         line=_line_from_cfg(plot.get("line")),
@@ -220,7 +231,7 @@ def _trend_from_cfg(cfg: DictConfig) -> TrendPlotConfig:
 def _run(cfg: DictConfig) -> None:
     logging.basicConfig(
         level=logging.INFO,
-        format="%(asctime)s %(levelname)-8s %(name)s — %(message)s",
+        format="%(asctime)s %(levelname)-8s %(name)s - %(message)s",
         datefmt="%H:%M:%S",
     )
     logger.info("Configuration:\n%s", OmegaConf.to_yaml(cfg))
@@ -240,7 +251,7 @@ def _run(cfg: DictConfig) -> None:
         logger.error("Unknown plot type %r. Expected: timeseries, trend.", plot_type)
         sys.exit(1)
 
-    logger.info("Done → %s/", master_cfg.output_dir)
+    logger.info("Done -> %s/", master_cfg.output_dir)
 
 
 def main() -> None:

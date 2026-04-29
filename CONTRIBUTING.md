@@ -91,7 +91,7 @@ Always annotate function parameters and return types. Skip local variables.
 
 ```python
 # ✅ Good
-def export(config: ExportConfig, source: RunSource, store: AnalysisStore) -> None:
+def export(config: ExportConfig, source: WandbSource, store: HDF5Store) -> None:
     rows = _extract_fields(run, ...)  # no annotation needed for locals
 
 # ❌ Bad
@@ -103,7 +103,7 @@ def export(config, source, store):
 
 ## Adding a New Source Backend
 
-Implement the `RunSource` protocol — no inheritance needed:
+Implement `fetch()` that yields `RunRecord` objects — no inheritance needed:
 
 ```python
 from typing import Iterator
@@ -116,20 +116,23 @@ class MySource:
                 id=run.id,
                 config=run.config,
                 summary=run.metrics,
+                fetch_history=lambda keys=None, r=run: iter(r.history(keys=keys)),
             )
 ```
 
 ## Adding a New Store Backend
 
-Implement the `AnalysisStore` protocol:
+The built-in store is `HDF5Store`; if you add a custom store, implement the
+same methods consumed by export/aggregate (`clear_group`, `write_field`,
+`read_field`, `list_fields`, run-cache read/write helpers).
 
 ```python
-from trackpull.store import AnalysisStore  # for reference only — no inheritance
+from trackpull.store import HDF5Store
 
 class MyStore:
-    def write(self, group, data, metadata=None): ...
-    def read(self, group): ...
+    def clear_group(self, group): ...
+    def write_field(self, group, name, data): ...
     def list_fields(self, group): ...
     def read_field(self, group, field): ...
-    def open_writer(self, n_runs, history_fields): ...
+    def write_run_cache(self, run_id, config, summary, history): ...
 ```

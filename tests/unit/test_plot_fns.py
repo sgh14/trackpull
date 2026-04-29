@@ -10,6 +10,8 @@ import numpy as np
 from trackpull.plot import (
     InputConfig,
     SelectConfig,
+    _color_by_fields,
+    _color_values,
     _expand_template,
     _flatten_dict,
     _template_fields,
@@ -277,3 +279,33 @@ def test_clip_curves_single_curve():
     curves = [np.array([1.0, 2.0, 3.0])]
     result = clip_curves(curves)
     np.testing.assert_array_equal(result[0], [1.0, 2.0, 3.0])
+
+
+# ---------------------------------------------------------------------------
+# color_by helpers
+# ---------------------------------------------------------------------------
+
+
+def test_color_by_fields_label():
+    assert _color_by_fields("label") == []
+
+
+def test_color_by_fields_single_field():
+    assert _color_by_fields("vstate.n_samples") == ["vstate.n_samples"]
+
+
+def test_color_by_fields_multiple_fields():
+    assert _color_by_fields(["vstate.n_samples", "graph.length"]) == [
+        "vstate.n_samples",
+        "graph.length",
+    ]
+
+
+def test_color_values_multiple_fields_returns_tuple_keys():
+    inp = InputConfig(path="results/plain.h5", label="Plain")
+    fields = {
+        "vstate.n_samples": np.array([1024, 1024, 2048]),
+        "graph.length": np.array([12, 16, 12]),
+    }
+    values = _color_values(inp, fields, ["vstate.n_samples", "graph.length"], 3)
+    assert list(values) == [(1024, 12), (1024, 16), (2048, 12)]

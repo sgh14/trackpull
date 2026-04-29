@@ -95,3 +95,61 @@ class TestReadColumn:
         store.write_field("grp", "x", np.array([1.0]))
         with pytest.raises(KeyError):
             store.read_field("nonexistent", "x")
+
+
+# ---------------------------------------------------------------------------
+# run cache
+# ---------------------------------------------------------------------------
+
+
+class TestRunCache:
+    def test_bulk_read_configs_and_summaries_preserve_order(self, store):
+        store.write_run_cache(
+            "r2",
+            config={"width": 128},
+            summary={"energy": -2.0},
+            history={"energy_step": [-0.8, -2.0]},
+        )
+        store.write_run_cache(
+            "r1",
+            config={"width": 64},
+            summary={"energy": -1.0},
+            history={"energy_step": [-0.5, -1.0]},
+        )
+
+        configs = store.read_run_cache_configs(["r1", "r2"])
+        summaries = store.read_run_cache_summaries(["r1", "r2"])
+
+        assert configs == [{"width": 64}, {"width": 128}]
+        assert summaries == [{"energy": -1.0}, {"energy": -2.0}]
+
+    def test_bulk_read_history_fields_returns_lists_in_order(self, store):
+        store.write_run_cache(
+            "r1",
+            config={},
+            summary={},
+            history={"energy_step": [-0.5, -1.0]},
+        )
+        store.write_run_cache(
+            "r2",
+            config={},
+            summary={},
+            history={"energy_step": [-0.8, -2.0]},
+        )
+
+        values = store.read_run_cache_history_fields(["r2", "r1"], "energy_step")
+
+        assert values == [[-0.8, -2.0], [-0.5, -1.0]]
+
+    def test_bulk_read_history_fields_returns_empty_list_for_missing_field(self, store):
+        store.write_run_cache("r1", config={}, summary={}, history={})
+        store.write_run_cache(
+            "r2",
+            config={},
+            summary={},
+            history={"energy_step": [-0.8, -2.0]},
+        )
+
+        values = store.read_run_cache_history_fields(["r1", "r2"], "energy_step")
+
+        assert values == [[], [-0.8, -2.0]]
